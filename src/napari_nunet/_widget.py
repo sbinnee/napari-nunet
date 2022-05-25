@@ -1,11 +1,3 @@
-"""
-This module is an example of a barebones QWidget plugin for napari
-
-It implements the Widget specification.
-see: https://napari.org/plugins/guides.html?#widgets
-
-Replace code below according to your needs.
-"""
 from magicgui import magic_factory, magicgui
 import torch
 import napari
@@ -40,12 +32,17 @@ def grayscale_nunet(img: ImageData, model: TransformerNet):
 def run_nu_net(img: ImageData, cfg: Path, axes: str):
     cfg = SelfConfig(cfg)
     nu_net = load_model(cfg)[2]
-    img, axes = img_reshape_axes(img, axes)
+    img = img_reshape_axes(img, axes)  # output in TCZYX format
+    shape = img.shape
+    img_output = np.empty_like(img, dtype=np.float32)
 
     with torch.no_grad():
-        for i in range(len(axes)):
-
-    return
+        for i in range(shape[0]):
+            for j in range(shape[1]):
+                for k in range(shape[2]):
+                    img_output[i, j, k, :, :] = grayscale_nunet(
+                        img[i, j, k, :, :], nu_net)
+    return img_output
 
 
 def nunet_plugin_wrapper():
@@ -68,7 +65,7 @@ def nunet_plugin(viewer: napari.Viewer, label_head, image: Image, axes) -> Image
     """
     if image is not None:
         t0 = time.time()
-        image_output = run_nu_net(image.data, axes)
+        image_output = run_nu_net(image.data, cfg_file, axes)
         t1 = time.time()
         print(f'Executed in {(t1 - t0) / 60:.2f} minutes')
         return image_output
@@ -82,6 +79,6 @@ def change_image(new_img: Image):
 
 @nunet_plugin.axes.changed.connect
 def change_axes(new_axes: str):
-    if len(new_axes) != nunet_plugin.image.value.data.ndim:
+    if len(new_axes) == nunet_plugin.image.value.data.ndim:
         nunet_plugin.axes.value = new_axes
         print("Axes of the current layer image have been set to", new_axes)

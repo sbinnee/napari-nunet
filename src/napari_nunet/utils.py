@@ -7,8 +7,8 @@ import numpy as np
 import torch
 from torchvision import transforms
 
-from .transformer_net import TransformerNet
-from .config import Config, SelfConfig
+from nunet.transformer_net import TransformerNet
+from nunet.config import Config, SelfConfig
 
 # Normalizing the axes within a dictionnary
 # With : X = width , Y = length, Z = depth,  C = number of channels, T = time
