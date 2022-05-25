@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import List
 
 from nunet.config import SelfConfig
-from nunet.utils import load_model, numpy2torch, torch2numpy, img_reshape_axes, detect_axes
+from nunet.utils import load_model, numpy2torch, torch2numpy
+from .utils import img_reshape_axes, detect_axes, img_postprocess_reshape, check_input_axes
 from nunet.transformer_net import TransformerNet
 
 cfg_file = Path(
@@ -30,10 +31,13 @@ def grayscale_nunet(img: ImageData, model: TransformerNet):
 
 
 def run_nu_net(img: ImageData, cfg: Path, axes: str):
+    print("axes before reshape = ", axes)
     cfg = SelfConfig(cfg)
     nu_net = load_model(cfg)[2]
     img = img_reshape_axes(img, axes)  # output in TCZYX format
     shape = img.shape
+    print("shape after reshape preprocess = ", shape)
+
     img_output = np.empty_like(img, dtype=np.float32)
 
     with torch.no_grad():
@@ -42,6 +46,10 @@ def run_nu_net(img: ImageData, cfg: Path, axes: str):
                 for k in range(shape[2]):
                     img_output[i, j, k, :, :] = grayscale_nunet(
                         img[i, j, k, :, :], nu_net)
+
+    img_output = img_postprocess_reshape(img_output, axes)
+    print("shape after reshape postprocess = ", img_output.shape)
+
     return img_output
 
 
@@ -49,7 +57,7 @@ def nunet_plugin_wrapper():
     return nunet_plugin
 
 
-@magicgui(axes=dict(widget_type="LineEdit", label="Axes"), call_button="Run", image=dict(label="Image"), label_head=dict(widget_type="Label", label=f'<h1 align="left"><img src="{lob_logo_path}">NU-Net<h3>Generic segmentation for bioimages</h3></h1>'))
+@magicgui(axes=dict(widget_type="LineEdit", label="Axes"), call_button="Run NU-Net", image=dict(label="Image"), label_head=dict(widget_type="Label", label=f'<h1 align="left"><img src="{lob_logo_path}">NU-Net<h3>Generic segmentation for bioimages</h3></h1>'))
 def nunet_plugin(viewer: napari.Viewer, label_head, image: Image, axes) -> ImageData:
     """Widget that applies NU-Net to an image 
 
@@ -63,6 +71,7 @@ def nunet_plugin(viewer: napari.Viewer, label_head, image: Image, axes) -> Image
     output : ImageData
         The transformed image layer
     """
+
     if image is not None:
         t0 = time.time()
         image_output = run_nu_net(image.data, cfg_file, axes)
@@ -74,11 +83,28 @@ def nunet_plugin(viewer: napari.Viewer, label_head, image: Image, axes) -> Image
 @nunet_plugin.image.changed.connect
 def change_image(new_img: Image):
     nunet_plugin.image.value = new_img
-    nunet_plugin.axes.value = detect_axes(nunet_plugin.image.value.data)
+    if new_img is not None:
+        nunet_plugin.axes.value = detect_axes(nunet_plugin.image.value.data)
+    else:
+        nunet_plugin.axes.value = ''
 
 
 @nunet_plugin.axes.changed.connect
 def change_axes(new_axes: str):
-    if len(new_axes) == nunet_plugin.image.value.data.ndim:
+    new_axes, check = check_input_axes(new_axes, nunet_plugin.image.value.data)
+    if check:
+        nunet_plugin.call_button.enabled = True
+        nunet_plugin.call_button.text = "Run NU-Net"
         nunet_plugin.axes.value = new_axes
         print("Axes of the current layer image have been set to", new_axes)
+    else:
+        nunet_plugin.call_button.enabled = False
+        nunet_plugin.call_button.text = "Incorrect Axes"
+
+# Does not work
+
+
+# @napari.layers.events.removed.connect
+# def empty_viewer(event):
+#     if len(event.source) == 0:
+#         nunet_plugin.axes.value = ''
