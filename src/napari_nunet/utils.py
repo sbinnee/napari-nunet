@@ -101,14 +101,12 @@ def img_reshape_axes(img_data: np.ndarray, axes: str) -> np.ndarray:
 # Give back the image it's original shape after processing
 def img_postprocess_reshape(img_data: np.ndarray, old_axes: str):
     old_axes = [axes_dict[axis] for axis in list(old_axes)]
-    print("old_axes =", old_axes)
     current_axes = []
     swap_axes = [0]*len(old_axes)
 
     for i in range(len(img_data.shape)):
         if img_data.shape[i] != 1:
             current_axes.append(i)
-    print("current_axes = ", current_axes)
 
     for i in current_axes:
         swap_axes[old_axes.index(i)] = current_axes.index(i)
@@ -127,5 +125,5 @@ def check_input_axes(new_axes: str, img_data: np.ndarray):
     new_axes = new_axes.replace(" ", "").upper()
     for axis in list(new_axes):
         if axis not in ['T', 'C', 'Z', 'Y', 'X'] or new_axes.count(axis) > 1:
-            return new_axes, False
+            return new_axes.replace(axis, ""), False
     return new_axes, len(new_axes) == img_data.ndim
