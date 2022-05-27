@@ -1,129 +1,185 @@
+import re
+import os
+import bisect
+from typing import List, Optional
+from pathlib import Path, PureWindowsPath
+from xml.dom import NotFoundErr
+
 import numpy as np
+import torch
+from torchvision import transforms
 
-# Normalizing the axes within a dictionnary
-# With : X = width , Y = length, Z = depth,  C = number of channels, T = time
-axes_dict = {'X': 4, 'Y': 3, 'Z': 2, 'C': 1, 'T': 0, 'YX': [4, 3], 'XYZ': [4, 3, 2], 'ZYX': [
-    2, 3, 4], 'YXC': [3, 4, 1], 'CYX': [1, 3, 4], 'TYX': [0, 3, 4], 'YXT': [3, 4, 0]}
+from nunet.transformer_net import TransformerNet
+from nunet.config import Config, SelfConfig
 
-# Normalizing image types
-img_type_dict = {'XY': '2D GrayScale', 'ZYX': '3D GrayScale',
-                 'YXC': '2D RGB', 'TYX': '2D Timed GrayScale'}
+models_folder = Path("C:/Users/hp/Desktop/PRe/nunet/models_filter_slider")
 
 
-def detect_axes(img_data: np.ndarray):
-    shape = img_data.shape
-    ndim = img_data.ndim
+def to_legal_ospath(path: str) -> str:
+    """Detect the OS and replace any eventual illegal path character with "_".
+    This will allow file transfer without filename check from Linux to Windows.
 
-    if ndim < 2 or ndim > 5 or ndim is None:
-        raise (ValueError('Axes undetected : Image dimensions must not be 0 nor 1'))
-    if ndim == 2:
-        axes_shape = 'YX'
-    elif ndim == 3:
-        third_dim = min(shape)
-        if third_dim > 3:
-            # Assuming that depth will usually be smaller than width and length
-            depth_idx = shape.index(third_dim)
-            if depth_idx == 0:
-                axes_shape = 'ZYX'
-            else:
-                axes_shape = 'YXZ'
-        elif third_dim == 3 or third_dim == 2:
-            chan_idx = shape.index(third_dim)
-            if chan_idx == 0:
-                axes_shape = 'CYX'
-            else:
-                axes_shape = 'YXC'
-        else:
-            raise (ValueError(
-                'Image type undetected : Image format is wrong or not yet supported'))
-    elif ndim == 4:
-        min_dim = min(shape)
-        if min_dim == 2 or min_dim == 3:  # We guess that a 2-deep or 3-deep dimension is probably the number of channels
-            chan_idx = shape.index(min_dim)
-            if chan_idx == 1:
-                axes_shape = 'TCYX'
-            elif chan_idx == 3:
-                axes_shape = 'ZYXC'
-            else:
-                axes_shape = 'CZYX'
-        else:
-            axes_shape = 'TZYX'
-    elif ndim == 5:
-        axes_shape = 'TCZYX'
-    return axes_shape
+    Parameters
+    ----------
+    path: str
+        The input path
+
+    Returns
+    -------
+    legal_path: str
+        A path with no illegal windows character but in posix path format
+    """
+    if os.name == "nt":  # If running on Windows
+        # Replace all illegal characters with underscore
+        legal_path = re.sub(r"\*|:|<|>|\?|\|", '_', path)
+        # If the original path was absolute, we have to put back the ":" after the root directory
+        if Path(path).is_absolute():
+            legal_path = legal_path.replace("_", ":", 1)
+        # Turn the Windows path into a Posix path if it isn't already
+        legal_path = PureWindowsPath(legal_path).as_posix()
+    elif os.name == "posix":  # If running Linux or MacOS
+        legal_path = PureWindowsPath(legal_path).as_posix()
+    return(legal_path)
 
 
-# Normalize the image to TCZYX axis format before processing
-def img_reshape_axes(img_data: np.ndarray, axes: str) -> np.ndarray:
-    axes = list(axes)
-    axes_id = []
+def load_checkpoints(cfg: Config) -> List[TransformerNet]:
+    style_models = []
+    for p in cfg._saved_model_path:
+        p = str(models_folder.parent / p)
+        model = torch.load(to_legal_ospath(p))
+        state_dict = model['state_dict']
+        for k in list(state_dict.keys()):
+            if re.search(r'in\d+\.running_(mean|var)$', k):
+                del state_dict[k]
+        style_model = TransformerNet()
+        style_model.load_state_dict(state_dict)
+        style_models.append(style_model)
+    return style_models
 
-    if (len(axes) < 2) or ('Y' not in axes) or ('X' not in axes):
-        raise ValueError('An image must at least have Y and X axes')
-    elif len(axes) != img_data.ndim:
-        raise ValueError(
-            'The axes format does not match the number of dimensions of the image')
 
+def load_model(
+    cfg: SelfConfig,
+    ind: int = -1
+):
+    print('len(cfg._saved_model_path):', len(cfg._saved_model_path))
+    models = load_checkpoints(cfg)
+
+    common_path = Path(cfg._saved_model_path[0]).parent.stem
+    print('common_path:', {common_path})
+    models_names = [Path(p).stem for p in cfg._saved_model_path]
+
+    for i, name in enumerate(models_names):
+        print(f'{i:3d}, {name}')
+
+    model_name = models_names[ind]
+    print(f'Loading {ind}: {model_name}')
+    nu_net = models[ind]
+    nu_net.cuda()
+    nu_net.eval()
+    return common_path, model_name, nu_net
+
+
+def numpy2torch(
+    array: np.ndarray,
+    device: Optional[str] = None,
+    cuda: Optional[bool] = None,
+) -> torch.Tensor:
+    """Cast an image array to a tensor, ready to be consumed by NU-Net
+
+    Parameters
+    ----------
+    array : numpy.ndarray
+        A numpy array
+    device : Optional
+        If given, cast the tensor to the specified device. Argument to
+        ``torch.Tensor.to()``
+    cuda : Optional
+        Copy the tensor from CPU to GPU. Ignored if `device` is given.
+
+    Returns
+    -------
+    torch.Tensor
+        Data range is assumed to be UINT8 but the actual dtype will be FLOAT32
+        for direct computation.
+
+    """
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Lambda(lambda x: x.mul(255))
+    ])
+    array = np.asarray(array, dtype=np.float32)
+    tensor = transform(array)
+    tensor = tensor.unsqueeze(0)
+    if device is not None:
+        tensor = tensor.to(device)
+    elif cuda is not None:
+        tensor = tensor.cuda()
+    return tensor
+
+
+def torch2numpy(
+    tensor: torch.Tensor,
+) -> np.ndarray:
+    """Cast pytorch tensor(s) to numpy array(s)
+
+    """
+    # (1,c,y,x)
+    ch = tensor.size(1)
+    tensor = tensor.detach().cpu().squeeze()
+    array = tensor.permute(1, 2, 0).numpy() if ch == 3 else tensor.numpy()
+    return array
+
+# Renvoie la liste des magnitudes disponibles
+
+
+def make_sw_list(cfg_folder: Path) -> list:
+    sw_list = []
+    for cfg_file in os.listdir(cfg_folder):
+        sw_list.append(int(Path(cfg_file).stem.split('_sw')[1])/10)
+    sw_list.sort()
+    return sw_list
+
+
+def find_sw_cfg(sw: float, cfg_folder: Path):
+    pattern = "_sw" + str(int(sw*10))
+    for cfg_file in os.listdir(cfg_folder):
+        if pattern in cfg_file:
+            return cfg_file
+    raise NotFoundErr(
+        f'No config file was found with this magnitude value : {int(sw*10)}')
+
+# Renvoie si la prédiction nécessite une somme pondérée ou non et les magnitudes des
+# deux modèles ainsi que leur poids respectifs dans la somme.
+
+
+def load_weights(magnitude: float, sw_list: list):
+    weighted = True
+    sw1 = magnitude
+    sw2 = magnitude
+    weight1 = 1
+    weight2 = 0
+    if magnitude in sw_list:
+        weighted = False
     else:
-        for axis in axes:
-            # list with the values of axes from axes_dict (e.g : [4,3,1] for an XYC image)
-            axes_id.append(axes_dict[axis])
+        bisect.insort(sw_list, magnitude)
+        idx = sw_list.index(magnitude)
+        if idx != 0:
+            sw1 = sw_list[idx-1]
+        else:
+            sw1 = None
+        if idx != len(sw_list)-1:
+            sw2 = sw_list[idx+1]
+        else:
+            sw2 = None
+        sw_list.remove(magnitude)
 
-        normalized_image = img_data
-        # Let's sort the axes by ascending order, and move the axes of the ndarray symmetrically
-        # Insertion Sort
+        if sw1 is not None:
+            if sw2 is not None:
+                weight1 = abs(magnitude-sw1)/abs(sw2-sw1)
+                weight2 = abs(magnitude-sw2)/abs(sw2-sw1)
+        else:
+            if sw2 is not None:
+                weight1 = 0
+                weight2 = 1
 
-        for i in range(1, len(axes_id)):
-            k = axes_id[i]
-            j = i-1
-            while j >= 0 and k < axes_id[j]:
-                axes_id[j + 1] = axes_id[j]
-                normalized_image = np.moveaxis(normalized_image, j, j+1)
-                j -= 1
-            axes_id[j + 1] = k
-
-        # Now let's add an axis wherever it's missing compared to the TCZYX format
-
-        # First add the T axis at the beginning
-        if axes_id[0] != 0:
-            normalized_image = np.expand_dims(normalized_image, 0)
-            axes_id.insert(0, 0)
-
-        while normalized_image.ndim != 5:
-            for i in range(len(axes_id)-1):
-                if axes_id[i+1]-axes_id[i] > 1:
-                    normalized_image = np.expand_dims(normalized_image, i+1)
-                    axes_id.insert(i+1, axes_id[i]+1)
-
-    return normalized_image
-
-
-# Give back the image it's original shape after processing
-def img_postprocess_reshape(img_data: np.ndarray, old_axes: str):
-    old_axes = [axes_dict[axis] for axis in list(old_axes)]
-    current_axes = []
-    swap_axes = [0]*len(old_axes)
-
-    for i in range(len(img_data.shape)):
-        if img_data.shape[i] != 1:
-            current_axes.append(i)
-
-    for i in current_axes:
-        swap_axes[old_axes.index(i)] = current_axes.index(i)
-
-    print(swap_axes)
-
-    img_output = np.transpose(np.squeeze(img_data), axes=swap_axes)
-
-    return img_output
-
-# Check if
-
-
-def check_input_axes(new_axes: str, img_data: np.ndarray):
-
-    new_axes = new_axes.replace(" ", "").upper()
-    for axis in list(new_axes):
-        if axis not in ['T', 'C', 'Z', 'Y', 'X'] or new_axes.count(axis) > 1:
-            return new_axes.replace(axis, ""), False
-    return new_axes, len(new_axes) == img_data.ndim
+    return weighted, sw1, sw2, weight1, weight2

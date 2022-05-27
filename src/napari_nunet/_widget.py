@@ -11,7 +11,7 @@ import os
 
 from nunet.config import SelfConfig
 from nunet.utils import load_model, numpy2torch, torch2numpy, load_weights, make_sw_list, find_sw_cfg
-from .utils import img_reshape_axes, detect_axes, img_postprocess_reshape, check_input_axes
+from .img_utils import img_reshape_axes, detect_axes, img_postprocess_reshape, check_input_axes
 from nunet.transformer_net import TransformerNet
 
 cfg_file = Path(
