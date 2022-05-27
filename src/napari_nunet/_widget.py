@@ -16,8 +16,8 @@ from nunet.transformer_net import TransformerNet
 
 cfg_file = Path(
     "C:/Users/hp/Desktop/PRe/nunet/config/self_ultimate_vgg19_lr1e-4_e20_sw100.yml")
-
 cfg_folder = Path("C:/Users/hp/Desktop/PRe/nunet/configs_filter_slider/")
+models_folder = Path("C:/Users/hp/Desktop/PRe/nunet/models_filter_slider")
 
 lob_logo_path = "C:/Users/hp/Desktop/PRe/napari-nunet/src/resources/Logo_LOB.png"
 
@@ -94,6 +94,7 @@ def nunet_plugin(viewer: napari.Viewer, label_head, image: Image, axes, slider) 
     """
     if image is not None:
         t0 = time.time()
+        # image_output = run_nunet(image.data, cfg_file, axes)
         image_output = weighted_sum(image.data, axes, slider, cfg_folder)
         t1 = time.time()
         print(f'Executed in {(t1 - t0) / 60:.2f} minutes')
