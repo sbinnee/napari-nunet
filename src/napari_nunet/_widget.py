@@ -7,16 +7,21 @@ import numpy as np
 from napari.qt.threading import thread_worker
 import time
 from pathlib import Path
+import os
 
 from nunet.config import SelfConfig
-from nunet.utils import load_model, numpy2torch, torch2numpy
+from nunet.utils import load_model, numpy2torch, torch2numpy, load_weights, make_sw_list, find_sw_cfg
 from .utils import img_reshape_axes, detect_axes, img_postprocess_reshape, check_input_axes
 from nunet.transformer_net import TransformerNet
 
 cfg_file = Path(
     "C:/Users/hp/Desktop/PRe/nunet/config/self_ultimate_vgg19_lr1e-4_e20_sw100.yml")
 
+cfg_folder = Path("C:/Users/hp/Desktop/PRe/nunet/configs_filter_slider/")
+
 lob_logo_path = "C:/Users/hp/Desktop/PRe/napari-nunet/src/resources/Logo_LOB.png"
+
+sw_list = make_sw_list(cfg_folder)
 
 
 def grayscale_nunet(img: ImageData, model: TransformerNet):
@@ -27,7 +32,7 @@ def grayscale_nunet(img: ImageData, model: TransformerNet):
     return out_np_clipped
 
 
-def run_nu_net(img: ImageData, cfg: Path, axes: str):
+def run_nunet(img: ImageData, cfg: Path, axes: str):
     cfg = SelfConfig(cfg)
     nu_net = load_model(cfg)[2]
     img = img_reshape_axes(img, axes)  # output in TCZYX format
@@ -47,15 +52,34 @@ def run_nu_net(img: ImageData, cfg: Path, axes: str):
     return img_output
 
 
+def weighted_sum(img: ImageData, axes: str, slider_value: float, cfg_folder: Path):
+    weighted, sw1, sw2, weight1, weight2 = load_weights(slider_value, sw_list)
+    if not weighted or sw1 == None or sw2 == None:
+        sw = sw1 if sw1 is not None else sw2
+        cfg_file = Path(os.path.join(cfg_folder, find_sw_cfg(sw, cfg_folder)))
+        img_output = run_nunet(img, cfg_file, axes)
+    else:
+        cfg_file1 = cfg_file = Path(os.path.join(
+            cfg_folder, find_sw_cfg(sw1, cfg_folder)))
+        cfg_file2 = cfg_file = Path(os.path.join(
+            cfg_folder, find_sw_cfg(sw2, cfg_folder)))
+        img_out1 = run_nunet(img, cfg_file1, axes)
+        img_out2 = run_nunet(img, cfg_file2, axes)
+        img_output = weight1*img_out1 + weight2*img_out2
+
+    return(img_output)
+
+
 def nunet_plugin_wrapper():
     return nunet_plugin
 
 
-@magicgui(axes=dict(widget_type="LineEdit", label="Axes", tooltip="T:time\nC:channels\nZ:depth\nY:width\nX:height"),
-          call_button="Run NU-Net",
-          image=dict(label="Image"), label_head=dict(widget_type="Label",
-          label=f'<img src="{lob_logo_path}">'))
-def nunet_plugin(viewer: napari.Viewer, label_head, image: Image, axes) -> ImageData:
+@ magicgui(axes=dict(widget_type="LineEdit", label="Axes", tooltip="T:time\nC:channels\nZ:depth\nY:width\nX:height"),
+           call_button="Run NU-Net",
+           image=dict(label="Image"), label_head=dict(widget_type="Label",
+                                                      label=f'<img src="{lob_logo_path}">'),
+           slider=dict(widget_type="FloatSlider", label="Intensity", value=5.0, min=0.0, max=10.0, step=0.5))
+def nunet_plugin(viewer: napari.Viewer, label_head, image: Image, axes, slider) -> ImageData:
     """Widget that applies NU-Net to an image
 
     Parameters
@@ -68,10 +92,9 @@ def nunet_plugin(viewer: napari.Viewer, label_head, image: Image, axes) -> Image
     output : ImageData
         The transformed image layer
     """
-
     if image is not None:
         t0 = time.time()
-        image_output = run_nu_net(image.data, cfg_file, axes)
+        image_output = weighted_sum(image.data, axes, slider, cfg_folder)
         t1 = time.time()
         print(f'Executed in {(t1 - t0) / 60:.2f} minutes')
         return image_output
@@ -100,7 +123,7 @@ def change_image(new_img: Image):
         nunet_plugin.axes.value = ''
 
 
-@nunet_plugin.axes.changed.connect
+@ nunet_plugin.axes.changed.connect
 def change_axes(new_axes: str):
     new_axes, check = check_input_axes(new_axes, nunet_plugin.image.value.data)
     nunet_plugin.axes.value = new_axes
@@ -117,3 +140,13 @@ def change_axes(new_axes: str):
         nunet_plugin.call_button.native.setStyleSheet(
             "background-color: lightcoral")
         nunet_plugin.call_button.text = "Incorrect Axes"
+
+# Since the step parameter does not work in the current magicgui version, this is a fix
+
+
+@ nunet_plugin.slider.changed.connect
+def fixed_slider(new_value: float):
+    if new_value % 1 >= nunet_plugin.slider.step/2:
+        nunet_plugin.slider.value = int(new_value) + nunet_plugin.slider.step
+    else:
+        nunet_plugin.slider.value = int(new_value)
