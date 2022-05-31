@@ -1,5 +1,4 @@
 from magicgui import magicgui
-from magicgui.widgets import FunctionGui
 import torch
 import napari
 from napari.types import ImageData
@@ -80,6 +79,10 @@ def weighted_sum(img: ImageData, axes: str, slider_value: float, sw_list: list):
     all_loaded = nunet_plugin_wrapper.load_on_launch
     with_cuda = nunet_plugin_wrapper.with_cuda
     weighted, sw1, sw2, weight1, weight2 = load_weights(slider_value, sw_list)
+
+    if slider_value == 0.0:
+        return img
+
     if not weighted or sw1 == None or sw2 == None:
         sw = sw1 if sw1 is not None else sw2
         if all_loaded:
@@ -121,6 +124,8 @@ if nunet_plugin_wrapper.load_on_launch:
     print("All models have been loaded successfully.")
 else:
     print("Required models will be loaded on call.")
+
+setattr(nunet_plugin_wrapper, 'empty_layer_list', True)
 
 
 @ magicgui(axes=dict(widget_type="LineEdit", label="Axes",
@@ -170,18 +175,23 @@ else:
 
 # Change handlers
 
-# @nunet_plugin.image.parent.layers.events.removed.connect
-# def removed_layer(removed):
-#     print("hello there")
+
+@nunet_plugin.image.native.currentIndexChanged.connect
+def img_layer_currIndexChanged(val):
+    if val == -1:
+        nunet_plugin_wrapper.empty_layer_list = True
+        nunet_plugin.axes.value = ''
+        nunet_plugin.axes.label = "Axes"
 
 
 @ nunet_plugin.image.changed.connect
 def change_image(new_img: Image):
-    if new_img is not None:     # If Layer List Vide -> TODO
-        nunet_plugin.axes.native.setText(
-            detect_axes(nunet_plugin.image.value.data))
+    if new_img is not None:
+        nunet_plugin_wrapper.empty_layer_list = False
         nunet_plugin.axes.native.setMaxLength(
             nunet_plugin.image.value.data.ndim)
+        nunet_plugin.axes.native.setText(
+            detect_axes(new_img.data))
         nunet_plugin.axes.tooltip = "axes"  # TODO
         nunet_plugin.axes.label += " (guessed)"
     else:
@@ -190,7 +200,7 @@ def change_image(new_img: Image):
 
 @ nunet_plugin.axes.changed.connect
 def change_axes(new_axes: str):
-    if nunet_plugin.image is not None:  # If Layer List Vide -> TODO
+    if not nunet_plugin_wrapper.empty_layer_list:
         new_axes, check = check_input_axes(
             new_axes, nunet_plugin.image.value.data)
         nunet_plugin.axes.value = new_axes
@@ -210,8 +220,6 @@ def change_axes(new_axes: str):
             nunet_plugin.call_button.text = "Incorrect Axes"
     else:
         nunet_plugin.axes.value = ''
-        nunet_plugin.axes.native.setStyleSheet(
-            "background-color: lightcoral")
         nunet_plugin.call_button.native.setStyleSheet(
             "background-color: lightcoral")
         nunet_plugin.call_button.text = "No Image Selected"
