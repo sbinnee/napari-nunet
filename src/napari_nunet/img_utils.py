@@ -12,6 +12,18 @@ img_type_dict = {'XY': '2D GrayScale', 'ZYX': '3D GrayScale',
 
 
 def detect_axes(img_data: np.ndarray):
+    """Tries to guess the axes of the input image at its load
+
+    Parameters
+    ----------
+    img_data : np.ndarray
+        The input image
+
+    Returns
+    -------
+    axes_shape : str
+        A simple guess of the image axes
+    """
     shape = img_data.shape
     ndim = img_data.ndim
 
@@ -54,8 +66,21 @@ def detect_axes(img_data: np.ndarray):
     return axes_shape
 
 
-# Normalize the image to TCZYX axis format before processing
 def img_reshape_axes(img_data: np.ndarray, axes: str) -> np.ndarray:
+    """Normalize the image to TCZYX axes format before processing
+
+    Parameters
+    ----------
+    img_data : np.ndarray
+        The input image
+    axes : str
+        The current image axes
+
+    Returns
+    -------
+    normalized_image : np.ndarray
+        The image with normalized TCZYX axes (5D array)
+    """
     axes = list(axes)
     axes_id = []
 
@@ -99,8 +124,21 @@ def img_reshape_axes(img_data: np.ndarray, axes: str) -> np.ndarray:
     return normalized_image
 
 
-# Give back the image it's original shape after processing
 def img_postprocess_reshape(img_data: np.ndarray, old_axes: str):
+    """Give back the image it's original shape after processing
+
+    Parameters
+    ----------
+    img_data : np.ndarray
+        The processed image
+    old_axes : str
+        The original (non-processed) image axes 
+
+    Returns
+    -------
+    img_output : np.ndarray
+        The image with it's original axes shape
+    """
     old_axes = [axes_dict[axis] for axis in list(old_axes)]
     current_axes = []
     swap_axes = [0]*len(old_axes)
@@ -116,11 +154,24 @@ def img_postprocess_reshape(img_data: np.ndarray, old_axes: str):
 
     return img_output
 
-# Check if
-
 
 def check_input_axes(new_axes: str, img_data: np.ndarray):
+    """Simple check for the axes from LineEdit input 
 
+    Parameters
+    ----------
+    new_axes : str
+        LineEdit input
+    img_data : np.ndarray
+        The current image layer 
+
+    Returns
+    -------
+    new_axes : str
+        Formatted and normalized axes
+    check : bool
+        checks if the length of the input matches the image number of dimensions
+    """
     new_axes = new_axes.replace(" ", "").upper()
     for axis in list(new_axes):
         if axis not in ['T', 'C', 'Z', 'Y', 'X'] or new_axes.count(axis) > 1:

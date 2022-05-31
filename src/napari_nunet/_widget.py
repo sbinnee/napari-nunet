@@ -1,4 +1,5 @@
 from magicgui import magicgui
+from magicgui.tqdm import tqdm
 import torch
 import napari
 from napari.types import ImageData
@@ -24,6 +25,22 @@ lob_logo_path = "C:/Users/hp/Desktop/PRe/napari-nunet/src/resources/Logo_LOB.png
 
 
 def grayscale_nunet(img: ImageData, model: TransformerNet, with_cuda: bool):
+    """Applies a nunet trained model to a grayscale Image
+
+    Parameters
+    ----------
+    img : ImageData
+        Layer data to apply the model to
+    model : TransformerNet
+        Trained nunet model
+    with_cuda : bool
+        If True, input tensor will be loaded on GPU
+
+    Returns
+    -------
+    out_np_clipped : NDArray[float]
+        The output numpy array
+    """
     tensor = numpy2torch(img, cuda=with_cuda)
     out_tensor = model(tensor)
     out_tensor_clipped = torch.clip(out_tensor, 0, 255)
@@ -32,6 +49,26 @@ def grayscale_nunet(img: ImageData, model: TransformerNet, with_cuda: bool):
 
 
 def run_nunet(img: ImageData, axes: str, with_cuda: bool,  cfg: Optional[Path] = None, model: Optional[TransformerNet] = None):
+    """Parses the input image and applies nunet on every grayscale subimage.
+
+    Parameters
+    ----------
+    img : ImageData
+        Layer data to apply the model to
+    axes : str
+        Axes of the image in format TCZYX
+    with_cuda : bool
+        If True, the model will be loaded on GPU
+    cfg: Optional[Path]
+        Path to the config file if model is not preloaded
+    model: Optional[TransformerNet]
+        Preloaded model
+
+    Returns
+    -------
+    output_image : ndarray
+        The output numpy array
+    """
     if cfg is not None:
         cfg = SelfConfig(cfg)
         nu_net = load_model(cfg, with_cuda=with_cuda)[2]
@@ -48,7 +85,7 @@ def run_nunet(img: ImageData, axes: str, with_cuda: bool,  cfg: Optional[Path] =
     with torch.no_grad():
         for i in range(shape[0]):
             for j in range(shape[1]):
-                for k in range(shape[2]):
+                for k in tqdm(range(shape[2])):
                     img_output[i, j, k, :, :] = grayscale_nunet(
                         img[i, j, k, :, :], nu_net, with_cuda)
 
@@ -57,25 +94,26 @@ def run_nunet(img: ImageData, axes: str, with_cuda: bool,  cfg: Optional[Path] =
     return img_output
 
 
-# def weighted_sum(img: ImageData, axes: str, slider_value: float, cfg_folder: Path, with_cuda: bool):
-#     weighted, sw1, sw2, weight1, weight2 = load_weights(slider_value, sw_list)
-#     if not weighted or sw1 == None or sw2 == None:
-#         sw = sw1 if sw1 is not None else sw2
-#         cfg_file = Path(os.path.join(cfg_folder, find_sw_cfg(sw, cfg_folder)))
-#         img_output = run_nunet(img, cfg_file, axes)
-#     else:
-#         cfg_file1 = cfg_file = Path(os.path.join(
-#             cfg_folder, find_sw_cfg(sw1, cfg_folder)))
-#         cfg_file2 = cfg_file = Path(os.path.join(
-#             cfg_folder, find_sw_cfg(sw2, cfg_folder)))
-#         img_out1 = run_nunet(img, cfg_file1, axes, with_cuda)
-#         img_out2 = run_nunet(img, cfg_file2, axes, with_cuda)
-#         img_output = weight1*img_out1 + weight2*img_out2
-
-#     return(img_output)
-
-
 def weighted_sum(img: ImageData, axes: str, slider_value: float, sw_list: list):
+    """Computes the weighted sum between two models when needed, in order to have 
+    various filtering intensities.
+
+    Parameters
+    ----------
+    img : ImageData
+        Layer data to apply the model to
+    axes : str
+        Axes of the image in format TCZYX
+    slider_value : float
+        Value of the slider widget
+    sw_list : list
+        List of all the sw values in trained models folder
+
+    Returns
+    -------
+    img_output : ndarray
+        The output numpy array
+    """
     all_loaded = nunet_plugin_wrapper.load_on_launch
     with_cuda = nunet_plugin_wrapper.with_cuda
     weighted, sw1, sw2, weight1, weight2 = load_weights(slider_value, sw_list)
@@ -111,13 +149,20 @@ def weighted_sum(img: ImageData, axes: str, slider_value: float, sw_list: list):
 
 
 def nunet_plugin_wrapper():
+    """Plugin wrapper, returns the plugin in order to retrieve its output value.
+    """
     return nunet_plugin
 
 
-# Set new attributes to the widget
+# Set new attributes to the wrapper, these will be used as global variables
+
+# Checks if cuda is available on the machine
 setattr(nunet_plugin_wrapper, 'with_cuda', torch.cuda.is_available())
+
+# Sets whether the models should be laoded on plugin launch or when called
 setattr(nunet_plugin_wrapper, 'load_on_launch', True)
 
+# Loads the models regarding if required
 if nunet_plugin_wrapper.load_on_launch:
     setattr(nunet_plugin_wrapper, 'all_models', load_all_models(
         models_folder, with_cuda=nunet_plugin_wrapper.with_cuda))
@@ -125,6 +170,7 @@ if nunet_plugin_wrapper.load_on_launch:
 else:
     print("Required models will be loaded on call.")
 
+# Checks if the layer list is empty
 setattr(nunet_plugin_wrapper, 'empty_layer_list', True)
 
 
@@ -175,13 +221,15 @@ else:
 
 # Change handlers
 
-
+# Reinitialize some widget values when layer list is emptied
 @nunet_plugin.image.native.currentIndexChanged.connect
 def img_layer_currIndexChanged(val):
     if val == -1:
         nunet_plugin_wrapper.empty_layer_list = True
         nunet_plugin.axes.value = ''
         nunet_plugin.axes.label = "Axes"
+
+# Change some widget values whenever the selected image changes
 
 
 @ nunet_plugin.image.changed.connect
@@ -193,9 +241,11 @@ def change_image(new_img: Image):
         nunet_plugin.axes.native.setText(
             detect_axes(new_img.data))
         nunet_plugin.axes.tooltip = "axes"  # TODO
-        nunet_plugin.axes.label += " (guessed)"
+        nunet_plugin.axes.label = "Axes (guessed)"
     else:
         nunet_plugin.axes.value = ''
+
+# Compute some tests whenever the user tries to change the axes value
 
 
 @ nunet_plugin.axes.changed.connect
@@ -223,6 +273,8 @@ def change_axes(new_axes: str):
         nunet_plugin.call_button.native.setStyleSheet(
             "background-color: lightcoral")
         nunet_plugin.call_button.text = "No Image Selected"
+
+# Reload all models on new device when users selects a new one
 
 
 @nunet_plugin.run_device.changed.connect
