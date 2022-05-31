@@ -1,4 +1,5 @@
 import numpy as np
+from napari.qt.threading import thread_worker
 
 # Normalizing the axes within a dictionnary
 # With : X = width , Y = length, Z = depth,  C = number of channels, T = time
@@ -110,8 +111,6 @@ def img_postprocess_reshape(img_data: np.ndarray, old_axes: str):
 
     for i in current_axes:
         swap_axes[old_axes.index(i)] = current_axes.index(i)
-
-    print(swap_axes)
 
     img_output = np.transpose(np.squeeze(img_data), axes=swap_axes)
 
