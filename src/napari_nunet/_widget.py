@@ -77,17 +77,25 @@ def run_nunet(img: ImageData, axes: str, with_cuda: bool,  cfg: Optional[Path] =
     else:
         raise ValueError(
             'No config file path nor model file specified, please specifiy either one or the other')
+
     img = img_reshape_axes(img, axes)  # output in TCZYX format
+
     shape = img.shape
+    nb_images = shape[0]*shape[1]*shape[2]
+    progress_step = 100/nb_images
+    progress = 0
 
     img_output = np.empty_like(img, dtype=np.float32)
 
     with torch.no_grad():
         for i in range(shape[0]):
             for j in range(shape[1]):
-                for k in tqdm(range(shape[2])):
+                for k in range(shape[2]):
                     img_output[i, j, k, :, :] = grayscale_nunet(
                         img[i, j, k, :, :], nu_net, with_cuda)
+                    progress += progress_step
+                    if progress > int(progress):
+                        nunet_plugin.progressbar.value = int(progress)
 
     img_output = img_postprocess_reshape(img_output, axes)
 
@@ -183,8 +191,10 @@ setattr(nunet_plugin_wrapper, 'empty_layer_list', True)
                        value=5.0, min=0.0, max=10.0, step=0.5),
            run_device=dict(widget_type="RadioButtons", label="Device", choices=[
                            "CPU", "GPU (recommended)"], orientation="horizontal", value="GPU (recommended)"),
-           progressbar=dict(widget_type="ProgressBar", label=" ", min=0, max=0, visible=False))
-def nunet_plugin(label_head, image: Image, axes, slider, run_device, progressbar) -> ImageData:
+           progressbar=dict(widget_type="ProgressBar",
+                            label="Processing", min=0, max=100, visible=False),
+           info_label=dict(widget_type="Label", visible=False))
+def nunet_plugin(label_head, image: Image, axes, slider, run_device, progressbar, info_label) -> ImageData:
     """Widget that applies NU-Net to an image
 
     Parameters
@@ -197,6 +207,10 @@ def nunet_plugin(label_head, image: Image, axes, slider, run_device, progressbar
     output : ImageData
         The transformed image layer
     """
+    nunet_plugin.progressbar.visible = True
+    nunet_plugin.progressbar.value = 0
+    nunet_plugin.info_label.visible = False
+
     if nunet_plugin_wrapper.load_on_launch:
         sw_list = list(nunet_plugin_wrapper.all_models.keys())
         sw_list.sort()
@@ -205,9 +219,26 @@ def nunet_plugin(label_head, image: Image, axes, slider, run_device, progressbar
 
     if image is not None:
         t0 = time.time()
-        image_output = weighted_sum(image.data, axes, slider, sw_list)
-        t1 = time.time()
-        print(f'Executed in {(t1 - t0) / 60:.2f} minutes')
+        try:
+            image_output = weighted_sum(image.data, axes, slider, sw_list)
+        except:
+            print("Wrong Axis Specification : please fix them and retry")
+            nunet_plugin.info_label.label = "Error"
+            nunet_plugin.progressbar.visible = False
+            nunet_plugin.info_label.visible = True
+            nunet_plugin.info_label.native.setStyleSheet(
+                "font : bold 14px; height : 32px; color : lightcoral")
+            nunet_plugin.info_label.value = "Wrong Axis Specification : please fix them and retry"
+            print(nunet_plugin.info_label.height)
+        else:
+            nunet_plugin.progressbar.value = 100
+            t1 = time.time()
+            print(f'Executed in {(t1 - t0) / 60:.2f} minutes')
+            nunet_plugin.info_label.visible = True
+            nunet_plugin.info_label.label = "Success"
+            nunet_plugin.info_label.native.setStyleSheet(
+                "font : bold 14px; height : 32px; color : lightgreen")
+            nunet_plugin.info_label.value = f'Executed in {(t1 - t0):.2f} seconds'
         return image_output
 
 
@@ -217,23 +248,29 @@ if nunet_plugin.image.value is not None:
     nunet_plugin.axes.native.setMaxLength(nunet_plugin.image.value.data.ndim)
 else:
     nunet_plugin.axes.native.setMaxLength(5)
-
+nunet_plugin.info_label.visible = False
+nunet_plugin.info_label.native.setStyleSheet("font : bold 14px; height : 32px")
 
 # Change handlers
 
 # Reinitialize some widget values when layer list is emptied
+
+
 @nunet_plugin.image.native.currentIndexChanged.connect
 def img_layer_currIndexChanged(val):
     if val == -1:
         nunet_plugin_wrapper.empty_layer_list = True
         nunet_plugin.axes.value = ''
         nunet_plugin.axes.label = "Axes"
+        nunet_plugin.progressbar.visible = False
 
 # Change some widget values whenever the selected image changes
 
 
 @ nunet_plugin.image.changed.connect
 def change_image(new_img: Image):
+    nunet_plugin.info_label.visible = False
+    nunet_plugin.progressbar.visible = False
     if new_img is not None:
         nunet_plugin_wrapper.empty_layer_list = False
         nunet_plugin.axes.native.setMaxLength(
@@ -250,6 +287,7 @@ def change_image(new_img: Image):
 
 @ nunet_plugin.axes.changed.connect
 def change_axes(new_axes: str):
+    nunet_plugin.info_label.visible = False
     if not nunet_plugin_wrapper.empty_layer_list:
         new_axes, check = check_input_axes(
             new_axes, nunet_plugin.image.value.data)
@@ -269,7 +307,6 @@ def change_axes(new_axes: str):
                 "background-color: lightcoral")
             nunet_plugin.call_button.text = "Incorrect Axes"
     else:
-        nunet_plugin.axes.value = ''
         nunet_plugin.call_button.native.setStyleSheet(
             "background-color: lightcoral")
         nunet_plugin.call_button.text = "No Image Selected"
@@ -289,6 +326,8 @@ def change_device(new_device: str):
 
 
 # Since the step parameter does not work in the current magicgui version, this is a fix
+
+
 @ nunet_plugin.slider.changed.connect
 def fixed_slider(new_value: float):
     if new_value % 1 >= nunet_plugin.slider.step/2:
