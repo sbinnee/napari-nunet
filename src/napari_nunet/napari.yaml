@@ -1,11 +1,10 @@
 name: napari-nunet
 display_name: NU-Net
 contributions:
-  commands: 
+  commands:
     - id: napari-nunet.nunet_plugin
       python_name: napari_nunet._widget:nunet_plugin_wrapper
-      title: nunet plugin   
+      title: nunet plugin
   widgets:
     - command: napari-nunet.nunet_plugin
       display_name: NU-Net Plugin
-    

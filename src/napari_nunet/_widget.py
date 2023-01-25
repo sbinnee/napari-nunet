@@ -1,27 +1,44 @@
-from magicgui import magicgui
-from magicgui.tqdm import tqdm
-import torch
-import napari
-from napari.types import ImageData
-from napari.layers import Image
-import numpy as np
-from napari.qt.threading import thread_worker
+import os
 import time
+import zipfile
+import re
 from pathlib import Path
 from typing import Optional
-import os
 
+import napari
+import numpy as np
+import torch
+from magicgui import magicgui
+from magicgui.tqdm import tqdm
+from napari.layers import Image
+from napari.qt.threading import thread_worker
+from napari.types import ImageData
 from nunet.config import SelfConfig
-from nunet.utils import load_model, numpy2torch, torch2numpy, load_weights, make_sw_list, find_sw_cfg, load_all_models
-from .img_utils import img_reshape_axes, detect_axes, img_postprocess_reshape, check_input_axes
 from nunet.transformer_net import TransformerNet
+from nunet.utils import load_model
+
+from .img_utils import (
+    check_input_axes,
+    detect_axes,
+    img_postprocess_reshape,
+    img_reshape_axes,
+)
+
+# from nunet.utils import (
+#     # find_sw_cfg,
+#     load_all_models,
+#     load_model,
+#     load_weights,
+#     # make_sw_list,
+#     numpy2torch,
+#     torch2numpy,
+# )
+
 
 # Resources
-cfg_file = Path(
-    "C:/Users/hp/Desktop/PRe/nunet/config/self_ultimate_vgg19_lr1e-4_e20_sw100.yml")
-cfg_folder = Path("C:/Users/hp/Desktop/PRe/nunet/configs_filter_slider/")
-models_folder = Path("C:/Users/hp/Desktop/PRe/nunet/models_filter_slider")
-lob_logo_path = "C:/Users/hp/Desktop/PRe/napari-nunet/src/resources/Logo_LOB.png"
+# LOB logo
+LOB_LOGO_PATH = Path(__file__).parent.absolute() / 'resources/Logo_LOB.png'
+DEFAULT_MODEL_CONFIG = 'config/_example/exp/filter_slider/'
 
 
 def grayscale_nunet(img: ImageData, model: TransformerNet, with_cuda: bool):
@@ -103,7 +120,7 @@ def run_nunet(img: ImageData, axes: str, with_cuda: bool,  cfg: Optional[Path] =
 
 
 def weighted_sum(img: ImageData, axes: str, slider_value: float, sw_list: list):
-    """Computes the weighted sum between two models when needed, in order to have 
+    """Computes the weighted sum between two models when needed, in order to have
     various filtering intensities.
 
     Parameters
@@ -153,7 +170,7 @@ def weighted_sum(img: ImageData, axes: str, slider_value: float, sw_list: list):
 
         img_output = weight1*img_out1 + weight2*img_out2
 
-    return(img_output)
+    return img_output
 
 
 def nunet_plugin_wrapper():
@@ -168,33 +185,71 @@ def nunet_plugin_wrapper():
 setattr(nunet_plugin_wrapper, 'with_cuda', torch.cuda.is_available())
 
 # Sets whether the models should be laoded on plugin launch or when called
-setattr(nunet_plugin_wrapper, 'load_on_launch', True)
+#setattr(nunet_plugin_wrapper, 'load_on_launch', True)
 
-# Loads the models regarding if required
-if nunet_plugin_wrapper.load_on_launch:
-    setattr(nunet_plugin_wrapper, 'all_models', load_all_models(
-        models_folder, with_cuda=nunet_plugin_wrapper.with_cuda))
-    print("All models have been loaded successfully.")
-else:
-    print("Required models will be loaded on call.")
+# # Loads the models regarding if required
+# if nunet_plugin_wrapper.load_on_launch:
+#     setattr(nunet_plugin_wrapper, 'all_models', load_all_models(
+#         models_folder, with_cuda=nunet_plugin_wrapper.with_cuda))
+#     print("All models have been loaded successfully.")
+# else:
+#     print("Required models will be loaded on call.")
 
 # Checks if the layer list is empty
 setattr(nunet_plugin_wrapper, 'empty_layer_list', True)
 
 
-@ magicgui(axes=dict(widget_type="LineEdit", label="Axes",
-                     tooltip="T: time\nC: channels\nZ: depth\nY: width\nX: height"),
-           call_button="Run NU-Net", image=dict(label="Image"),
-           label_head=dict(widget_type="Label",
-                           label=f'<img src="{lob_logo_path}">'),
-           slider=dict(widget_type="FloatSlider", label="Intensity",
-                       value=5.0, min=0.0, max=10.0, step=0.5),
-           run_device=dict(widget_type="RadioButtons", label="Device", choices=[
-                           "CPU", "GPU (recommended)"], orientation="horizontal", value="GPU (recommended)"),
-           progressbar=dict(widget_type="ProgressBar",
-                            label="Processing", min=0, max=100, visible=False),
-           info_label=dict(widget_type="Label", visible=False))
-def nunet_plugin(label_head, image: Image, axes, slider, run_device, progressbar, info_label) -> ImageData:
+def check_run_nunet():
+    """Check whether both models and image are loaded properly and
+    enable/disable the call button of the main widget `nunet_plugin`.
+    """
+    if nunet_plugin._valid_model:
+        nunet_plugin.call_button.enabled = True
+
+
+@magicgui(
+    label_head=dict(
+        widget_type='Label', label=f'<img src="{LOB_LOGO_PATH}">'
+    ),
+    model_zip=dict(
+        widget_type='FileEdit', label='Model', mode='r',
+        tooltip="Load archive file (.zip) provided"
+    ),
+    image=dict(
+        label='Image'
+    ),
+    axes=dict(
+        widget_type='LineEdit', label='Axes',
+        tooltip="T: time\nC: channels\nZ: depth\nY: width\nX: height"
+    ),
+    slider=dict(
+        widget_type='FloatSlider', label='Intensity',
+        value=5.0, min=0.0, max=10.0, step=0.5
+    ),
+    run_device=dict(
+        widget_type='RadioButtons', label='Device',
+        choices=['CPU', 'GPU (recommended)'],
+        orientation='horizontal', value='GPU (recommended)'
+    ),
+    progressbar=dict(
+        widget_type='ProgressBar',
+        label='Processing', min=0, max=100, visible=False
+    ),
+    info_label=dict(
+        widget_type='Label', visible=False
+    ),
+    call_button="Run NU-Net",
+)
+def nunet_plugin(
+    label_head,
+    model_zip,
+    image: Image,
+    axes,
+    slider,
+    run_device,
+    progressbar,
+    info_label
+) -> ImageData:
     """Widget that applies NU-Net to an image
 
     Parameters
@@ -211,11 +266,11 @@ def nunet_plugin(label_head, image: Image, axes, slider, run_device, progressbar
     nunet_plugin.progressbar.value = 0
     nunet_plugin.info_label.visible = False
 
-    if nunet_plugin_wrapper.load_on_launch:
-        sw_list = list(nunet_plugin_wrapper.all_models.keys())
-        sw_list.sort()
-    else:
-        sw_list = make_sw_list(cfg_folder)
+    # if nunet_plugin_wrapper.load_on_launch:
+    #     sw_list = list(nunet_plugin_wrapper.all_models.keys())
+    #     sw_list.sort()
+    # else:
+    #     sw_list = make_sw_list(cfg_folder)
 
     if image is not None:
         t0 = time.time()
@@ -240,6 +295,45 @@ def nunet_plugin(label_head, image: Image, axes, slider, run_device, progressbar
                 "font : bold 14px; height : 32px; color : lightgreen")
             nunet_plugin.info_label.value = f'Executed in {(t1 - t0):.2f} seconds'
         return image_output
+
+
+# Initial of the main widget `nunet_plugin`
+nunet_plugin.call_button.enabled = False
+nunet_plugin._valid_model = False
+
+
+@nunet_plugin.model_zip.changed.connect
+def model_zip_changed(val):
+    if Path(val).suffix != '.zip':
+        nunet_plugin._valid_model = False
+        check_run_nunet()
+        return
+
+    zip_file = zipfile.ZipFile(val)
+    cfgs = list(filter(
+        lambda zi: re.search(rf'{DEFAULT_MODEL_CONFIG}.+', zi.filename),
+        zip_file.filelist
+    ))
+
+    def _sort_cfgs(zi: zipfile.ZipInfo):
+        fname: str = zi.filename
+        res = re.search(r'\d+.yml', fname).group()
+        return int(res.rstrip('.yml'))
+    cfgs_sorted = sorted(cfgs, key=_sort_cfgs)
+
+    try:
+        self_cfgs = [SelfConfig(_, zip_file=zip_file) for _ in cfgs_sorted]
+        models = []
+        for cfg in self_cfgs:
+            common_path, model_name, nu_net = load_model(cfg, cuda=False, zip_file=zip_file)
+            models.append(nu_net)
+        nunet_plugin_wrapper.all_models = models
+        # flags
+        nunet_plugin._valid_model = True
+    except:
+        nunet_plugin._valid_model = False
+    finally:
+        check_run_nunet()
 
 
 # Customization with Qt
@@ -321,8 +415,8 @@ def change_device(new_device: str):
     elif new_device == "GPU (recommended)":
         setattr(nunet_plugin_wrapper, 'with_cuda', True)
 
-    setattr(nunet_plugin_wrapper, 'all_models', load_all_models(
-        models_folder, with_cuda=nunet_plugin_wrapper.with_cuda))
+    # setattr(nunet_plugin_wrapper, 'all_models', load_all_models(
+    #     models_folder, with_cuda=nunet_plugin_wrapper.with_cuda))
 
 
 # Since the step parameter does not work in the current magicgui version, this is a fix
