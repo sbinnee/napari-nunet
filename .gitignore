@@ -80,5 +80,8 @@ venv/
 # OS
 .DS_Store
 
+# mypy
+.mypy_cache/
+
 # written by setuptools_scm
 **/_version.py

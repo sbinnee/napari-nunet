@@ -6,10 +6,36 @@ from xml.dom import NotFoundErr
 
 import numpy as np
 import torch
+from napari.types import ImageData
+from nunet.config import SelfConfig
+from nunet.transformer_net import TransformerNet
+from nunet.utils import load_model, match_out_shape
 from torchvision import transforms
 
-# import re
-# import zipfile
+
+def grayscale_nunet(img: ImageData, model: TransformerNet, with_cuda: bool):
+    """Applies a nunet trained model to a grayscale Image
+
+    Parameters
+    ----------
+    img : ImageData
+        Layer data to apply the model to
+    model : TransformerNet
+        Trained nunet model
+    with_cuda : bool
+        If True, input tensor will be loaded on GPU
+
+    Returns
+    -------
+    out_np_clipped : NDArray[float]
+        The output numpy array
+    """
+    tensor = numpy2torch(img, cuda=with_cuda)
+    out_tensor = model(tensor)
+    out_tensor_clipped = torch.clip(out_tensor, 0, 255)
+    out_np_clipped = torch2numpy(out_tensor_clipped)/255.0
+    out_np_cipped = match_out_shape(out_np_clipped, img)
+    return out_np_clipped
 
 
 def numpy2torch(
@@ -46,7 +72,8 @@ def numpy2torch(
     if device is not None:
         tensor = tensor.to(device)
     elif cuda is not None:
-        tensor = tensor.cuda()
+        if cuda:
+            tensor = tensor.cuda()
     return tensor
 
 

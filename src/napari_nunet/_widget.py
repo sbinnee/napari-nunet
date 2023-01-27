@@ -15,14 +15,15 @@ from napari.qt.threading import thread_worker
 from napari.types import ImageData
 from nunet.config import SelfConfig
 from nunet.transformer_net import TransformerNet
-from nunet.utils import load_model
+from nunet.utils import load_model, match_out_shape
 
 from .img_utils import (
     check_input_axes,
     detect_axes,
-    img_postprocess_reshape,
     img_reshape_axes,
+    img_postprocess_reshape
 )
+from .utils import grayscale_nunet
 
 # from nunet.utils import (
 #     # find_sw_cfg,
@@ -41,31 +42,13 @@ LOB_LOGO_PATH = Path(__file__).parent.absolute() / 'resources/Logo_LOB.png'
 DEFAULT_MODEL_CONFIG = 'config/_example/exp/filter_slider/'
 
 
-def grayscale_nunet(img: ImageData, model: TransformerNet, with_cuda: bool):
-    """Applies a nunet trained model to a grayscale Image
-
-    Parameters
-    ----------
-    img : ImageData
-        Layer data to apply the model to
-    model : TransformerNet
-        Trained nunet model
-    with_cuda : bool
-        If True, input tensor will be loaded on GPU
-
-    Returns
-    -------
-    out_np_clipped : NDArray[float]
-        The output numpy array
-    """
-    tensor = numpy2torch(img, cuda=with_cuda)
-    out_tensor = model(tensor)
-    out_tensor_clipped = torch.clip(out_tensor, 0, 255)
-    out_np_clipped = torch2numpy(out_tensor_clipped)/255.0
-    return out_np_clipped
-
-
-def run_nunet(img: ImageData, axes: str, with_cuda: bool,  cfg: Optional[Path] = None, model: Optional[TransformerNet] = None):
+def run_nunet(
+    img: ImageData,
+    axes: str,
+    with_cuda: bool,
+    cfg: Optional[Path] = None,
+    model: Optional[TransformerNet] = None
+):
     """Parses the input image and applies nunet on every grayscale subimage.
 
     Parameters
@@ -103,13 +86,15 @@ def run_nunet(img: ImageData, axes: str, with_cuda: bool,  cfg: Optional[Path] =
     progress = 0
 
     img_output = np.empty_like(img, dtype=np.float32)
-
+    # TCZYX -> ijkYX
     with torch.no_grad():
         for i in range(shape[0]):
             for j in range(shape[1]):
                 for k in range(shape[2]):
-                    img_output[i, j, k, :, :] = grayscale_nunet(
-                        img[i, j, k, :, :], nu_net, with_cuda)
+                    _img_input = img[i, j, k, :, :]
+                    _img_output = grayscale_nunet(_img_input , nu_net, with_cuda)
+                    _img_output = match_out_shape(_img_output, _img_input)
+                    img_output[i, j, k, :, :] =  _img_output
                     progress += progress_step
                     if progress > int(progress):
                         nunet_plugin.progressbar.value = int(progress)
@@ -119,9 +104,29 @@ def run_nunet(img: ImageData, axes: str, with_cuda: bool,  cfg: Optional[Path] =
     return img_output
 
 
+def load_weights(slider_value, sw_list):
+    val = int(slider_value * 10)
+    weighted = True
+    sw1 = None
+    sw2 = None
+    weight1 = None
+    weight2 = None
+    if val in sw_list:
+        weighted = False
+    else:
+        weighted = True
+        diff = [abs(_ - val) for _ in sw_list]
+        args = np.argsort(diff)
+        sw1 = sw_list[args[0]]
+        sw2 = sw_list[args[1]]
+        weight1 = abs(sw2 - val) / abs(sw1 + sw2)
+        weight2 = abs(sw1 - val) / abs(sw1 + sw2)
+    return weighted, sw1, sw2, weight1, weight2
+
+
 def weighted_sum(img: ImageData, axes: str, slider_value: float, sw_list: list):
-    """Computes the weighted sum between two models when needed, in order to have
-    various filtering intensities.
+    """Computes the weighted sum between two models when needed, in order to
+    have various filtering intensities.
 
     Parameters
     ----------
@@ -139,12 +144,21 @@ def weighted_sum(img: ImageData, axes: str, slider_value: float, sw_list: list):
     img_output : ndarray
         The output numpy array
     """
-    all_loaded = nunet_plugin_wrapper.load_on_launch
+    # all_loaded = nunet_plugin_wrapper.load_on_launch
+    all_models = nunet_plugin_wrapper.all_models
     with_cuda = nunet_plugin_wrapper.with_cuda
     weighted, sw1, sw2, weight1, weight2 = load_weights(slider_value, sw_list)
+    print(with_cuda)
+    print(slider_value, sw_list)
+    print(weighted, sw1, sw2, weight1, weight2)
 
     if slider_value == 0.0:
         return img
+
+    if not weighted:
+        sw = int(slider_value * 10)
+        img_output = run_nunet(img, axes, with_cuda, model=all_models[sw])
+    return img_output
 
     if not weighted or sw1 == None or sw2 == None:
         sw = sw1 if sw1 is not None else sw2
@@ -224,7 +238,7 @@ def check_run_nunet():
     ),
     slider=dict(
         widget_type='FloatSlider', label='Intensity',
-        value=5.0, min=0.0, max=10.0, step=0.5
+        value=8.0, min=4.0, max=10.0, step=0.5
     ),
     run_device=dict(
         widget_type='RadioButtons', label='Device',
@@ -271,11 +285,13 @@ def nunet_plugin(
     #     sw_list.sort()
     # else:
     #     sw_list = make_sw_list(cfg_folder)
+    sw_list = list(nunet_plugin_wrapper.all_models.keys())
 
     if image is not None:
         t0 = time.time()
         try:
             image_output = weighted_sum(image.data, axes, slider, sw_list)
+            return image_output
         except:
             print("Wrong Axis Specification : please fix them and retry")
             nunet_plugin.info_label.label = "Error"
@@ -294,7 +310,6 @@ def nunet_plugin(
             nunet_plugin.info_label.native.setStyleSheet(
                 "font : bold 14px; height : 32px; color : lightgreen")
             nunet_plugin.info_label.value = f'Executed in {(t1 - t0):.2f} seconds'
-        return image_output
 
 
 # Initial of the main widget `nunet_plugin`
@@ -315,18 +330,25 @@ def model_zip_changed(val):
         zip_file.filelist
     ))
 
+    def _get_sw(s: str) -> Optional[int]:
+        res = re.search(r'sw\d+', s)
+        if res is not None:
+            r = res.group()
+            return int(r.lstrip('sw'))
+        return None
+
     def _sort_cfgs(zi: zipfile.ZipInfo):
         fname: str = zi.filename
-        res = re.search(r'\d+.yml', fname).group()
-        return int(res.rstrip('.yml'))
+        return _get_sw(fname)
     cfgs_sorted = sorted(cfgs, key=_sort_cfgs)
 
     try:
         self_cfgs = [SelfConfig(_, zip_file=zip_file) for _ in cfgs_sorted]
-        models = []
+        models = dict()
         for cfg in self_cfgs:
-            common_path, model_name, nu_net = load_model(cfg, cuda=False, zip_file=zip_file)
-            models.append(nu_net)
+            common_path, model_name, nu_net = load_model(cfg, cuda=False,
+                                                         zip_file=zip_file)
+            models[_get_sw(common_path)] = nu_net
         nunet_plugin_wrapper.all_models = models
         # flags
         nunet_plugin._valid_model = True
