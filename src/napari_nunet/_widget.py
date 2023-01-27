@@ -24,6 +24,7 @@ from .img_utils import (
     img_postprocess_reshape
 )
 from .utils import grayscale_nunet
+from ._version import __version__
 
 # from nunet.utils import (
 #     # find_sw_cfg,
@@ -359,7 +360,7 @@ def model_zip_changed(val):
 
 
 # Customization with Qt
-nunet_plugin.label_head.value = '<p style="text-align: center; line-height: 0.8;"><h1><span style="font-family: Trebuchet MS, Helvetica, sans-serif;">NU-Net</span></h1></p><p style="text-align: center; line-height: 0.5;"><span style="font-family: "Trebuchet MS", Helvetica, sans-serif font-size: 10px"><em>Generic segmentation for bioimages</em></span></p><p style="text-align: center; line-height: 0.5;"><span style="font-family: "Trebuchet MS", Helvetica, sans-seriffont-size: 6px"><em><a href="https://github.com/tangnrolle/napari_nunet_dev">Github Repository</a></em></span></p><p style="text-align: center; line-height: 1.00;"><span style="font-family: "Trebuchet MS", Helvetica, sans-serif font-size: 8px"><em>V.0.0.1</em></span></p>'
+nunet_plugin.label_head.value = f'<p style="text-align: center; line-height: 0.8;"><h1><span style="font-family: Trebuchet MS, Helvetica, sans-serif;">NU-Net</span></h1></p><p style="text-align: center; line-height: 0.5;"><span style="font-family: "Trebuchet MS", Helvetica, sans-serif font-size: 10px"><em>Generic segmentation for bioimages</em></span></p><p style="text-align: center; line-height: 0.5;"><span style="font-family: "Trebuchet MS", Helvetica, sans-seriffont-size: 6px"><em><a href="https://github.com/tangnrolle/napari_nunet_dev">Github Repository</a></em></span></p><p style="text-align: center; line-height: 1.00;"><span style="font-family: "Trebuchet MS", Helvetica, sans-serif font-size: 8px"><em>v{__version__}</em></span></p>'
 if nunet_plugin.image.value is not None:
     nunet_plugin.axes.native.setMaxLength(nunet_plugin.image.value.data.ndim)
 else:
