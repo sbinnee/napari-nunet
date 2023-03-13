@@ -1,5 +1,6 @@
 import numpy as np
 from napari.qt.threading import thread_worker
+from typing import Optional
 
 # Normalizing the axes within a dictionnary
 # With : X = width , Y = length, Z = depth,  C = number of channels, T = time
@@ -19,13 +20,15 @@ img_type_dict = {'XY': '2D GrayScale', 'ZYX': '3D GrayScale',
                  'YXC': '2D RGB', 'TYX': '2D Timed GrayScale'}
 
 
-def detect_axes(img_data: np.ndarray):
+def detect_axes(img_data: np.ndarray, is_rgb: Optional[bool]):
     """Tries to guess the axes of the input image at its load
 
     Parameters
     ----------
     img_data : np.ndarray
         The input image
+    is_rgb : bool, optional
+        Optional boolean value from `napari.layers.Image.rgb`
 
     Returns
     -------
@@ -41,19 +44,26 @@ def detect_axes(img_data: np.ndarray):
         axes_shape = 'YX'
     elif ndim == 3:
         third_dim = min(shape)
-        if third_dim > 3:
-            # Assuming that depth will usually be smaller than width and length
-            depth_idx = shape.index(third_dim)
-            if depth_idx == 0:
-                axes_shape = 'ZYX'
-            else:
-                axes_shape = 'YXZ'
+        if is_rgb is not None:
+            if third_dim == 4 and is_rgb:
+                chan_idx = shape.index(third_dim)
+                if chan_idx == 0:
+                    axes_shape = 'CYX'
+                else:
+                    axes_shape = 'YXC'
         elif third_dim == 3 or third_dim == 2:
             chan_idx = shape.index(third_dim)
             if chan_idx == 0:
                 axes_shape = 'CYX'
             else:
                 axes_shape = 'YXC'
+        elif third_dim > 4:
+            # Assuming that depth will usually be smaller than width and length
+            depth_idx = shape.index(third_dim)
+            if depth_idx == 0:
+                axes_shape = 'ZYX'
+            else:
+                axes_shape = 'YXZ'
         else:
             raise (ValueError(
                 'Image type undetected : Image format is wrong or not yet supported'))
@@ -97,7 +107,6 @@ def img_reshape_axes(img_data: np.ndarray, axes: str) -> np.ndarray:
     elif len(axes) != img_data.ndim:
         raise ValueError(
             'The axes format does not match the number of dimensions of the image')
-
     else:
         for axis in axes:
             # list with the values of axes from axes_dict (e.g : [4,3,1] for an XYC image)
@@ -106,7 +115,6 @@ def img_reshape_axes(img_data: np.ndarray, axes: str) -> np.ndarray:
         normalized_image = img_data
         # Let's sort the axes by ascending order, and move the axes of the ndarray symmetrically
         # Insertion Sort
-
         for i in range(1, len(axes_id)):
             k = axes_id[i]
             j = i-1
@@ -128,7 +136,9 @@ def img_reshape_axes(img_data: np.ndarray, axes: str) -> np.ndarray:
                 if axes_id[i+1]-axes_id[i] > 1:
                     normalized_image = np.expand_dims(normalized_image, i+1)
                     axes_id.insert(i+1, axes_id[i]+1)
-
+        # Handle RGBA
+        if normalized_image.shape[1] == 4:
+            normalized_image = normalized_image[:,:3,...]
     return normalized_image
 
 

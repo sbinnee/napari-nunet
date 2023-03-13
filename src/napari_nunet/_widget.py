@@ -386,6 +386,7 @@ def img_layer_currIndexChanged(val):
 
 @ nunet_plugin.image.changed.connect
 def change_image(new_img: Image):
+    is_rgb = new_img.rgb
     nunet_plugin.info_label.visible = False
     nunet_plugin.progressbar.visible = False
     if new_img is not None:
@@ -393,7 +394,7 @@ def change_image(new_img: Image):
         nunet_plugin.axes.native.setMaxLength(
             nunet_plugin.image.value.data.ndim)
         nunet_plugin.axes.native.setText(
-            detect_axes(new_img.data))
+            detect_axes(new_img.data, is_rgb=is_rgb))
         nunet_plugin.axes.tooltip = "axes"  # TODO
         nunet_plugin.axes.label = "Axes (guessed)"
     else:
