@@ -3,8 +3,16 @@ from napari.qt.threading import thread_worker
 
 # Normalizing the axes within a dictionnary
 # With : X = width , Y = length, Z = depth,  C = number of channels, T = time
-axes_dict = {'X': 4, 'Y': 3, 'Z': 2, 'C': 1, 'T': 0, 'YX': [4, 3], 'XYZ': [4, 3, 2], 'ZYX': [
-    2, 3, 4], 'YXC': [3, 4, 1], 'CYX': [1, 3, 4], 'TYX': [0, 3, 4], 'YXT': [3, 4, 0]}
+axes_dict = {
+    'X': 4, 'Y': 3, 'Z': 2, 'C': 1, 'T': 0,
+    'YX': [3, 4],
+    'XYZ': [4, 3, 2],
+    'ZYX': [2, 3, 4],
+    'YXC': [3, 4, 1],
+    'CYX': [1, 3, 4],
+    'TYX': [0, 3, 4],
+    'YXT': [3, 4, 0],
+}
 
 # Normalizing image types
 img_type_dict = {'XY': '2D GrayScale', 'ZYX': '3D GrayScale',
@@ -132,7 +140,7 @@ def img_postprocess_reshape(img_data: np.ndarray, old_axes: str):
     img_data : np.ndarray
         The processed image
     old_axes : str
-        The original (non-processed) image axes 
+        The original (non-processed) image axes
 
     Returns
     -------
@@ -156,14 +164,14 @@ def img_postprocess_reshape(img_data: np.ndarray, old_axes: str):
 
 
 def check_input_axes(new_axes: str, img_data: np.ndarray):
-    """Simple check for the axes from LineEdit input 
+    """Simple check for the axes from LineEdit input
 
     Parameters
     ----------
     new_axes : str
         LineEdit input
     img_data : np.ndarray
-        The current image layer 
+        The current image layer
 
     Returns
     -------
